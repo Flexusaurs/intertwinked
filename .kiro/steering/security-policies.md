@@ -1,0 +1,5 @@
+<!------------------------------------------------------------------------------------
+   Add Rules to this file or a short description and have Kiro refine them for you:   
+-------------------------------------------------------------------------------------> 
+
+every peer has a unique public string (like a public key) and a nickname that represents the peer's unique identity, in order to prevent user impersonation. each user has his own unique token string and 4 word mnemonic key in order to log in. chat and file history has to be saved locally to the browser. each user can destroy their session and generate a new peer identity, which renders their old peer id un-dialable, and will be marked as DEAD in the UI and in other users chats. all content transferred between users (like files sent over ipfs and chat messages) has to undergo encryption before being sent and decryption when received by the other user - in order to prevent any kind of MITM attacks.
