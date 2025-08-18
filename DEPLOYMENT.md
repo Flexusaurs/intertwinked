@@ -38,6 +38,12 @@ This project includes two GitHub Actions workflows:
    - Network issues with IPFS gateways
    - Try the CI workflow first to isolate build issues
 
+5. **504 Gateway Timeout on IPFS**
+   - Content may take 5-10 minutes to propagate across IPFS network
+   - Try alternative gateways: dweb.link or cf-ipfs.com
+   - Check if IPFS daemon connected to network during deployment
+   - Verify content was properly pinned in GitHub Actions logs
+
 ### Manual Testing:
 
 ```bash
@@ -52,12 +58,17 @@ docker build -t intertwinked .
 docker run -p 8080:80 intertwinked
 ```
 
-### Deployment URL:
+### Deployment URLs:
 
 Once deployed to IPFS, the app will be available at:
-- https://ipfs.io/ipfs/[HASH]
+- **Primary**: https://ipfs.io/ipfs/[HASH]
+- **Alternatives** (if primary is slow): 
+  - https://dweb.link/ipfs/[HASH]
+  - https://cf-ipfs.com/ipfs/[HASH]
 
-The application is pinned exclusively to the ipfs.io network for complete decentralization. The HASH will be displayed in the GitHub Actions summary.
+**Important**: IPFS content may take 5-10 minutes to propagate across the network. If you get a 504 timeout immediately after deployment, wait a few minutes and try again.
+
+The application is pinned to the IPFS network for complete decentralization. The HASH will be displayed in the GitHub Actions summary.
 
 ## Local Development
 

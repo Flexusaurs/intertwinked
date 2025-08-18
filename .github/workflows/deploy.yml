@@ -69,28 +69,51 @@ jobs:
         echo "Initializing IPFS..."
         export IPFS_PATH=/tmp/ipfs
         ipfs init
-        echo "Starting IPFS daemon..."
-        ipfs daemon --offline &
-        sleep 10
+        echo "Starting IPFS daemon with network connectivity..."
+        ipfs daemon --enable-gc &
+        sleep 15
         echo "IPFS daemon started"
+        
+        # Wait for daemon to be ready
+        timeout 30 bash -c 'until ipfs id; do sleep 1; done'
+        echo "IPFS daemon is ready and connected to network"
     
     - name: Pin to IPFS
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       run: |
         export IPFS_PATH=/tmp/ipfs
-        echo "Adding files to IPFS..."
-        IPFS_HASH=$(ipfs add -r -Q build/)
+        echo "Adding files to IPFS network..."
+        
+        # Add files to IPFS with progress
+        IPFS_HASH=$(ipfs add -r -Q --progress build/)
         echo "IPFS Hash: $IPFS_HASH"
         
         # Test if the hash is valid
         if [ -n "$IPFS_HASH" ]; then
-          echo "✅ Successfully pinned to IPFS"
+          echo "✅ Successfully added to IPFS"
           echo "🌐 Access URL: https://ipfs.io/ipfs/$IPFS_HASH"
           
-          # Pin to ipfs.io network
-          echo "📌 Pinning to ipfs.io network..."
+          # Pin the content
+          echo "📌 Pinning content..."
           ipfs pin add $IPFS_HASH
-          echo "✅ Pinned to local IPFS node"
+          echo "✅ Content pinned to local node"
+          
+          # Announce to the network
+          echo "📡 Announcing to IPFS network..."
+          ipfs dht provide $IPFS_HASH &
+          
+          # Try to connect to some bootstrap nodes to ensure network connectivity
+          echo "🔗 Ensuring network connectivity..."
+          ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN || true
+          ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa || true
+          
+          # Wait a bit for network propagation
+          echo "⏳ Waiting for network propagation..."
+          sleep 10
+          
+          # Test retrieval
+          echo "🧪 Testing content retrieval..."
+          timeout 30 ipfs cat $IPFS_HASH/index.html > /dev/null && echo "✅ Content retrievable" || echo "⚠️ Content retrieval test failed"
           
           # Save hash for summary
           echo "IPFS_HASH=$IPFS_HASH" >> $GITHUB_ENV
@@ -106,11 +129,24 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**IPFS Hash:** \`$IPFS_HASH\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Access URL:**" >> $GITHUB_STEP_SUMMARY
+        echo "**Primary Access URL:**" >> $GITHUB_STEP_SUMMARY
         echo "- [ipfs.io](https://ipfs.io/ipfs/$IPFS_HASH)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Alternative Access (if primary is slow):**" >> $GITHUB_STEP_SUMMARY
+        echo "- [dweb.link](https://dweb.link/ipfs/$IPFS_HASH)" >> $GITHUB_STEP_SUMMARY
+        echo "- [cf-ipfs.com](https://cf-ipfs.com/ipfs/$IPFS_HASH)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Note:** IPFS content may take 5-10 minutes to propagate across the network." >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Deployment Time:** $(date)" >> $GITHUB_STEP_SUMMARY
-        echo "**Status:** Pinned to IPFS network via ipfs.io" >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** Pinned and announced to IPFS network" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Cleanup IPFS daemon
+      if: always()
+      run: |
+        echo "Stopping IPFS daemon..."
+        pkill ipfs || true
+        echo "IPFS daemon stopped"
     
     - name: Build summary for PRs
       if: github.event_name == 'pull_request'
