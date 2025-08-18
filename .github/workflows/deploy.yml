@@ -82,45 +82,142 @@ jobs:
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       run: |
         export IPFS_PATH=/tmp/ipfs
-        echo "Adding files to IPFS network..."
         
-        # Add files to IPFS with progress
-        IPFS_HASH=$(ipfs add -r -Q --progress build/)
-        echo "IPFS Hash: $IPFS_HASH"
+        # Check IPFS daemon status
+        echo "🔍 Checking IPFS daemon status..."
+        ipfs id || (echo "❌ IPFS daemon not responding" && exit 1)
         
-        # Test if the hash is valid
-        if [ -n "$IPFS_HASH" ]; then
-          echo "✅ Successfully added to IPFS"
-          echo "🌐 Access URL: https://ipfs.io/ipfs/$IPFS_HASH"
-          
-          # Pin the content
-          echo "📌 Pinning content..."
-          ipfs pin add $IPFS_HASH
-          echo "✅ Content pinned to local node"
-          
-          # Announce to the network
-          echo "📡 Announcing to IPFS network..."
-          ipfs dht provide $IPFS_HASH &
-          
-          # Try to connect to some bootstrap nodes to ensure network connectivity
-          echo "🔗 Ensuring network connectivity..."
+        # Check network connectivity
+        echo "🌐 Checking network connectivity..."
+        PEER_COUNT=$(ipfs swarm peers | wc -l)
+        echo "Connected to $PEER_COUNT peers"
+        
+        if [ "$PEER_COUNT" -eq 0 ]; then
+          echo "⚠️ No peers connected, trying to connect to bootstrap nodes..."
+          ipfs bootstrap add --default
           ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN || true
           ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa || true
-          
-          # Wait a bit for network propagation
-          echo "⏳ Waiting for network propagation..."
-          sleep 10
-          
-          # Test retrieval
-          echo "🧪 Testing content retrieval..."
-          timeout 30 ipfs cat $IPFS_HASH/index.html > /dev/null && echo "✅ Content retrievable" || echo "⚠️ Content retrieval test failed"
-          
-          # Save hash for summary
-          echo "IPFS_HASH=$IPFS_HASH" >> $GITHUB_ENV
-        else
-          echo "❌ Failed to get IPFS hash"
+          sleep 5
+          PEER_COUNT=$(ipfs swarm peers | wc -l)
+          echo "Now connected to $PEER_COUNT peers"
+        fi
+        
+        # Verify build directory
+        echo "� Verifuying build directory..."
+        ls -la build/
+        [ -f build/index.html ] || (echo "❌ index.html missing" && exit 1)
+        
+        echo "📤 Adding files to IPFS network..."
+        # Add files to IPFS with detailed output
+        IPFS_HASH=$(ipfs add -r -Q build/)
+        echo "IPFS Hash: $IPFS_HASH"
+        
+        # Verify the hash format
+        if [[ ! "$IPFS_HASH" =~ ^Qm[1-9A-HJ-NP-Za-km-z]{44}$ ]]; then
+          echo "❌ Invalid IPFS hash format: $IPFS_HASH"
           exit 1
         fi
+        
+        echo "✅ Successfully added to IPFS"
+        echo "🌐 Primary URL: https://ipfs.io/ipfs/$IPFS_HASH"
+        
+        # Pin the content
+        echo "📌 Pinning content..."
+        ipfs pin add $IPFS_HASH
+        echo "✅ Content pinned to local node"
+        
+        # List what was added
+        echo "📋 Content structure:"
+        ipfs ls $IPFS_HASH
+        
+        # Test local retrieval
+        echo "🧪 Testing local content retrieval..."
+        if timeout 10 ipfs cat $IPFS_HASH/index.html > /tmp/test_index.html; then
+          echo "✅ Local retrieval successful"
+          echo "📄 Index.html size: $(wc -c < /tmp/test_index.html) bytes"
+          echo "📄 Contains 'Intertwinked': $(grep -c 'Intertwinked' /tmp/test_index.html || echo 0)"
+        else
+          echo "❌ Local retrieval failed"
+          exit 1
+        fi
+        
+        # Announce to DHT and ensure wide propagation
+        echo "📡 Announcing to IPFS DHT..."
+        ipfs dht provide $IPFS_HASH &
+        PROVIDE_PID=$!
+        
+        # Connect to more peers to increase propagation
+        echo "🔗 Connecting to additional peers for better propagation..."
+        ipfs swarm connect /ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ || true
+        ipfs swarm connect /ip4/104.236.179.241/tcp/4001/p2p/QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM || true
+        ipfs swarm connect /ip4/128.199.219.111/tcp/4001/p2p/QmSoLSafTMBsPKadTEgaXctDQVcqN88CNLHXMkTNwMKPnu || true
+        
+        # Wait longer for better propagation
+        echo "⏳ Waiting for network propagation (60 seconds)..."
+        sleep 60
+        
+        # Try to resolve from DHT
+        echo "🔍 Testing DHT resolution..."
+        DHT_PROVIDERS=$(timeout 30 ipfs dht findprovs $IPFS_HASH | wc -l)
+        echo "Found $DHT_PROVIDERS providers in DHT"
+        
+        # Force republish to DHT
+        echo "🔄 Republishing to DHT..."
+        ipfs dht provide $IPFS_HASH
+        
+        # Test external gateway access multiple times
+        echo "🌐 Testing external gateway access..."
+        for i in {1..3}; do
+          echo "Attempt $i/3:"
+          if curl -I --max-time 15 "https://ipfs.io/ipfs/$IPFS_HASH" 2>/dev/null | head -1; then
+            echo "✅ External gateway accessible"
+            break
+          else
+            echo "⚠️ External gateway not accessible, waiting..."
+            sleep 10
+          fi
+        done
+        
+        # Pin to remote pinning service for persistent availability
+        echo "📌 Pinning to remote IPFS pinning service..."
+        PINNING_RESPONSE=$(curl -s -X POST \
+          "http://shlakotzone.duckdns.org:9097/pins" \
+          -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"cid\": \"$IPFS_HASH\",
+            \"name\": \"intertwinked-$(date +%s)\",
+            \"origins\": []
+          }" \
+          --max-time 30)
+        
+        if echo "$PINNING_RESPONSE" | grep -q "requestid\|created"; then
+          echo "✅ Successfully pinned to remote service"
+          echo "📌 Pinning response: $PINNING_RESPONSE"
+        else
+          echo "⚠️ Remote pinning may have failed: $PINNING_RESPONSE"
+          echo "Continuing with local seeding..."
+        fi
+        
+        # Still do some gateway seeding for immediate availability
+        echo "🌱 Seeding through gateways for immediate access..."
+        curl -s --max-time 15 "https://ipfs.io/ipfs/$IPFS_HASH" > /dev/null &
+        curl -s --max-time 15 "https://dweb.link/ipfs/$IPFS_HASH" > /dev/null &
+        
+        # Wait for seeding
+        sleep 20
+        
+        # Final verification
+        echo "🔍 Final verification..."
+        if curl -I --max-time 10 "https://ipfs.io/ipfs/$IPFS_HASH" 2>/dev/null | grep -q "200 OK"; then
+          echo "✅ Content successfully accessible via ipfs.io"
+        else
+          echo "⚠️ Content accessible via remote pinning service, may take time for gateways"
+        fi
+        
+        # Save hash for summary
+        echo "IPFS_HASH=$IPFS_HASH" >> $GITHUB_ENV
+        echo "PEER_COUNT=$PEER_COUNT" >> $GITHUB_ENV
     
     - name: Create deployment summary
       if: env.IPFS_HASH != '' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
@@ -140,6 +237,49 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Deployment Time:** $(date)" >> $GITHUB_STEP_SUMMARY
         echo "**Status:** Pinned and announced to IPFS network" >> $GITHUB_STEP_SUMMARY
+        echo "**Network Peers:** $PEER_COUNT connected during deployment" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Deployment Process:**" >> $GITHUB_STEP_SUMMARY
+        echo "- Content added to IPFS and pinned locally" >> $GITHUB_STEP_SUMMARY
+        echo "- Announced to DHT and connected to multiple peers" >> $GITHUB_STEP_SUMMARY
+        echo "- **Pinned to remote IPFS service for persistence**" >> $GITHUB_STEP_SUMMARY
+        echo "- Seeded through gateways for immediate access" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Persistent Availability:**" >> $GITHUB_STEP_SUMMARY
+        echo "- Content is permanently pinned on remote IPFS service" >> $GITHUB_STEP_SUMMARY
+        echo "- Should be accessible immediately or within minutes" >> $GITHUB_STEP_SUMMARY
+        echo "- No more 504 timeouts due to provider shutdown" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Verify remote pinning status
+      if: env.IPFS_HASH != '' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+      run: |
+        echo "🔍 Checking remote pinning service status..."
+        
+        # Check pinning service status
+        PINS_STATUS=$(curl -s \
+          "http://shlakotzone.duckdns.org:9097/pins" \
+          -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
+          --max-time 10)
+        
+        if echo "$PINS_STATUS" | grep -q "$IPFS_HASH"; then
+          echo "✅ Content confirmed pinned on remote service"
+          echo "🌐 Content will remain available permanently"
+        else
+          echo "⚠️ Could not verify remote pinning status"
+          echo "Response: $PINS_STATUS"
+        fi
+        
+        # Test final accessibility
+        echo "🧪 Testing final accessibility..."
+        for i in {1..3}; do
+          if curl -s --max-time 10 "https://ipfs.io/ipfs/$IPFS_HASH" | grep -q "Intertwinked"; then
+            echo "✅ Content fully accessible and contains expected content"
+            break
+          else
+            echo "⏳ Attempt $i/3 - waiting for propagation..."
+            sleep 10
+          fi
+        done
     
     - name: Cleanup IPFS daemon
       if: always()

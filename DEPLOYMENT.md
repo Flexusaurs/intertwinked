@@ -38,11 +38,12 @@ This project includes two GitHub Actions workflows:
    - Network issues with IPFS gateways
    - Try the CI workflow first to isolate build issues
 
-5. **504 Gateway Timeout on IPFS**
-   - Content may take 5-10 minutes to propagate across IPFS network
+5. **IPFS Accessibility Issues**
+   - Content is pinned to a dedicated remote service for persistence
+   - Should be accessible immediately after deployment
+   - If still getting 504 errors, check GitHub Actions logs for pinning status
    - Try alternative gateways: dweb.link or cf-ipfs.com
-   - Check if IPFS daemon connected to network during deployment
-   - Verify content was properly pinned in GitHub Actions logs
+   - Verify remote pinning service is operational
 
 ### Manual Testing:
 
@@ -66,9 +67,9 @@ Once deployed to IPFS, the app will be available at:
   - https://dweb.link/ipfs/[HASH]
   - https://cf-ipfs.com/ipfs/[HASH]
 
-**Important**: IPFS content may take 5-10 minutes to propagate across the network. If you get a 504 timeout immediately after deployment, wait a few minutes and try again.
+**Persistent Pinning**: The application uses a dedicated remote IPFS pinning service to ensure permanent availability. Content should be accessible immediately after deployment.
 
-The application is pinned to the IPFS network for complete decentralization. The HASH will be displayed in the GitHub Actions summary.
+The application is pinned to both the local IPFS network and a remote pinning service for complete decentralization and reliability. The HASH will be displayed in the GitHub Actions summary.
 
 ## Local Development
 
