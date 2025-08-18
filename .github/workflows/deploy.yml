@@ -11,12 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
         cache: 'npm'
     
     - name: Install dependencies
@@ -33,6 +34,7 @@ jobs:
       with:
         name: build-files
         path: build/
+        retention-days: 30
 
   deploy:
     needs: build
@@ -46,13 +48,33 @@ jobs:
         name: build-files
         path: build/
     
-    - name: Setup IPFS
-      uses: ibnesayeed/setup-ipfs@master
-      with:
-        ipfs_version: ^0.17
+    - name: Setup IPFS CLI
+      run: |
+        wget https://dist.ipfs.tech/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+        tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+        sudo mv kubo/ipfs /usr/local/bin/
+        ipfs --version
+    
+    - name: Initialize IPFS
+      run: |
+        ipfs init
+        ipfs daemon --offline &
+        sleep 5
     
     - name: Pin to IPFS
       run: |
-        ipfs add -r build/ > ipfs_hash.txt
-        echo "IPFS Hash: $(cat ipfs_hash.txt | tail -1 | cut -d' ' -f2)"
-        echo "Access via: https://ipfs.io/ipfs/$(cat ipfs_hash.txt | tail -1 | cut -d' ' -f2)"
+        IPFS_HASH=$(ipfs add -r -Q build/)
+        echo "IPFS Hash: $IPFS_HASH"
+        echo "Access via: https://ipfs.io/ipfs/$IPFS_HASH"
+        echo "IPFS_HASH=$IPFS_HASH" >> $GITHUB_ENV
+    
+    - name: Create deployment summary
+      run: |
+        echo "## 🚀 Deployment Successful" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**IPFS Hash:** \`$IPFS_HASH\`" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Access URLs:**" >> $GITHUB_STEP_SUMMARY
+        echo "- https://ipfs.io/ipfs/$IPFS_HASH" >> $GITHUB_STEP_SUMMARY
+        echo "- https://gateway.pinata.cloud/ipfs/$IPFS_HASH" >> $GITHUB_STEP_SUMMARY
+        echo "- https://cloudflare-ipfs.com/ipfs/$IPFS_HASH" >> $GITHUB_STEP_SUMMARY
