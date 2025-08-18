@@ -23,12 +23,17 @@ This project includes two GitHub Actions workflows:
    - Ensure the workflow files are in `.github/workflows/`
    - Try manual trigger via "Actions" tab → "Run workflow"
 
-2. **Build failures**
+2. **Organization Action Restrictions**
+   - If you get "actions not allowed" errors, your organization restricts external actions
+   - Go to Organization Settings → Actions → Allow GitHub actions
+   - Or use the modified workflows that don't require external actions
+
+3. **Build failures**
    - Check Node.js version compatibility
    - Verify all dependencies are in package.json
    - Test build locally: `npm ci && npm run build`
 
-3. **IPFS deployment issues**
+4. **IPFS deployment issues**
    - IPFS setup might timeout - check logs
    - Network issues with IPFS gateways
    - Try the CI workflow first to isolate build issues
