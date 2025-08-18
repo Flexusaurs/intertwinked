@@ -2,6 +2,30 @@
    Add Rules to this file or a short description and have Kiro refine them for you:   
 -------------------------------------------------------------------------------------> 
 
-in order for the app to be completely decentralized, the final build has to be pinned to IPFS.
-the CI pipeline should check for no failing tests and then compile and build everything using github actions. the CD has to pin the final files and host them on IPFS in order for the app to not rely on a central traditional cloud host or server. to be completely decentralized. the app has to be completely containerized, after the ci the app image will be updated, and in the CD job will be deployed - deploying the webapp and website to the IPFS network, on ipfs.io.
+# Deployment Workflow
+
+## Decentralized Deployment Requirements
+
+In order for the app to be completely decentralized, the final build has to be pinned to IPFS exclusively through ipfs.io.
+
+## CI/CD Pipeline
+
+### Continuous Integration (CI)
+- Check for no failing tests
+- Compile and build everything using GitHub Actions
+- Verify build integrity and completeness
+- Generate build artifacts
+
+### Continuous Deployment (CD)
+- Pin the final files to IPFS network via ipfs.io
+- Host them on the IPFS network to avoid reliance on traditional cloud hosts or servers
+- Ensure complete decentralization by using only IPFS for hosting
+- The app must be completely containerized
+- After CI, the app image will be updated
+- CD job deploys the webapp to the IPFS network exclusively on ipfs.io
+
+## Deployment Target
+- **Primary**: ipfs.io IPFS network
+- **Access**: https://ipfs.io/ipfs/[HASH]
+- **No fallback gateways**: Only ipfs.io to maintain true decentralization
 

@@ -1,6 +1,11 @@
 # Intertwinked - P2P Communication Platform
 
+[![CI](https://github.com/USERNAME/intertwinked/actions/workflows/ci.yml/badge.svg)](https://github.com/USERNAME/intertwinked/actions/workflows/ci.yml)
+[![Deploy](https://github.com/USERNAME/intertwinked/actions/workflows/deploy.yml/badge.svg)](https://github.com/USERNAME/intertwinked/actions/workflows/deploy.yml)
+
 A decentralized peer-to-peer communication application with a CLI-style interface.
+
+> **Note**: Replace `USERNAME` in the badge URLs above with your actual GitHub username.
 
 ## Features
 
