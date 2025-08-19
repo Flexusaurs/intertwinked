@@ -44,6 +44,7 @@ jobs:
         echo "Building application..."
         npm run build
         echo "Build completed" 
+    
     - name: List build contents
       run: |
         echo "Build directory contents:"
@@ -51,7 +52,8 @@ jobs:
         echo "Build verification:"
         [ -f build/index.html ] && echo "✅ index.html found" || echo "❌ index.html missing"
         [ -f build/health.json ] && echo "✅ health.json found" || echo "❌ health.json missing"
-       - name: Network Diagnostics
+    
+    - name: Network Diagnostics
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       run: |
         echo "🔍 Network diagnostics..."
@@ -63,6 +65,7 @@ jobs:
         nc -zv shlakotzone.duckdns.org 443 || echo "Port 443 closed/unreachable"
         echo "HTTPS endpoint test:"
         curl -sv https://shlakotzone.duckdns.org/api/v0/version 2>&1 || true 
+    
     # Updated pinning section for your remote service
     - name: Deploy to Remote IPFS Pinning Service
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
