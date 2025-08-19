@@ -196,23 +196,66 @@ jobs:
           echo "📌 Pinning response: $PINNING_RESPONSE"
         else
           echo "⚠️ Remote pinning may have failed: $PINNING_RESPONSE"
-          echo "Continuing with local seeding..."
+          echo "Continuing with enhanced network seeding..."
         fi
         
-        # Still do some gateway seeding for immediate availability
-        echo "🌱 Seeding through gateways for immediate access..."
-        curl -s --max-time 15 "https://ipfs.io/ipfs/$IPFS_HASH" > /dev/null &
-        curl -s --max-time 15 "https://dweb.link/ipfs/$IPFS_HASH" > /dev/null &
+        # Enhanced network propagation due to connectivity issues
+        echo "🌐 Enhanced network propagation (addressing connectivity issues)..."
         
-        # Wait for seeding
-        sleep 20
+        # Connect to more reliable public nodes
+        echo "🔗 Connecting to reliable public IPFS nodes..."
+        ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN || true
+        ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa || true
+        ipfs swarm connect /ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ || true
+        ipfs swarm connect /ip4/104.236.179.241/tcp/4001/p2p/QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM || true
         
-        # Final verification
-        echo "🔍 Final verification..."
-        if curl -I --max-time 10 "https://ipfs.io/ipfs/$IPFS_HASH" 2>/dev/null | grep -q "200 OK"; then
-          echo "✅ Content successfully accessible via ipfs.io"
+        # Multiple DHT announcements
+        echo "📡 Multiple DHT announcements..."
+        for i in {1..3}; do
+          echo "DHT announcement $i/3..."
+          ipfs dht provide $IPFS_HASH &
+          sleep 5
+        done
+        
+        # Comprehensive gateway seeding to compensate for connectivity issues
+        echo "🌱 Comprehensive gateway seeding..."
+        GATEWAYS=(
+          "https://ipfs.io/ipfs"
+          "https://dweb.link/ipfs"
+          "https://cf-ipfs.com/ipfs"
+          "https://gateway.pinata.cloud/ipfs"
+          "https://cloudflare-ipfs.com/ipfs"
+          "https://w3s.link/ipfs"
+        )
+        
+        # Seed through all gateways
+        for gateway in "${GATEWAYS[@]}"; do
+          echo "Seeding via $gateway..."
+          curl -s --max-time 20 "$gateway/$IPFS_HASH" > /dev/null &
+        done
+        
+        # Wait for seeding attempts
+        echo "⏳ Waiting for comprehensive seeding..."
+        sleep 45
+        
+        # Test multiple gateways for accessibility
+        echo "🔍 Testing gateway accessibility..."
+        ACCESSIBLE_COUNT=0
+        for gateway in "${GATEWAYS[@]}"; do
+          if curl -I --max-time 8 "$gateway/$IPFS_HASH" 2>/dev/null | grep -q "200 OK"; then
+            echo "✅ $gateway - Accessible"
+            ACCESSIBLE_COUNT=$((ACCESSIBLE_COUNT + 1))
+          else
+            echo "⏳ $gateway - Not yet accessible"
+          fi
+        done
+        
+        echo "📊 $ACCESSIBLE_COUNT out of ${#GATEWAYS[@]} gateways are accessible"
+        
+        if [ "$ACCESSIBLE_COUNT" -gt 0 ]; then
+          echo "✅ Content is accessible through $ACCESSIBLE_COUNT gateway(s)"
         else
-          echo "⚠️ Content accessible via remote pinning service, may take time for gateways"
+          echo "⚠️ Content may need more time to propagate due to network connectivity issues"
         fi
         
         # Save hash for summary
@@ -241,21 +284,38 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Deployment Process:**" >> $GITHUB_STEP_SUMMARY
         echo "- Content added to IPFS and pinned locally" >> $GITHUB_STEP_SUMMARY
-        echo "- Announced to DHT and connected to multiple peers" >> $GITHUB_STEP_SUMMARY
+        echo "- Enhanced network propagation (multiple DHT announcements)" >> $GITHUB_STEP_SUMMARY
         echo "- **Pinned to remote IPFS service for persistence**" >> $GITHUB_STEP_SUMMARY
-        echo "- Seeded through gateways for immediate access" >> $GITHUB_STEP_SUMMARY
+        echo "- Comprehensive seeding through 6 major gateways" >> $GITHUB_STEP_SUMMARY
+        echo "- Extended 2-minute propagation period" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Persistent Availability:**" >> $GITHUB_STEP_SUMMARY
-        echo "- Content is permanently pinned on remote IPFS service" >> $GITHUB_STEP_SUMMARY
-        echo "- Should be accessible immediately or within minutes" >> $GITHUB_STEP_SUMMARY
-        echo "- No more 504 timeouts due to provider shutdown" >> $GITHUB_STEP_SUMMARY
+        echo "**Accessibility Status:**" >> $GITHUB_STEP_SUMMARY
+        if [ "${FINAL_ACCESSIBLE:-0}" -gt 0 ]; then
+          echo "- ✅ Content verified accessible via $FINAL_ACCESSIBLE gateway(s)" >> $GITHUB_STEP_SUMMARY
+          echo "- Ready for immediate use" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "- ⏳ Content deployed, may need 10-15 minutes for full propagation" >> $GITHUB_STEP_SUMMARY
+          echo "- Network connectivity challenges detected, using enhanced seeding" >> $GITHUB_STEP_SUMMARY
+        fi
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Note:** Due to network connectivity challenges, content is seeded through multiple gateways for reliability." >> $GITHUB_STEP_SUMMARY
     
-    - name: Verify remote pinning status
+    - name: Extended propagation and verification
       if: env.IPFS_HASH != '' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
       run: |
-        echo "🔍 Checking remote pinning service status..."
+        export IPFS_PATH=/tmp/ipfs
+        echo "🔍 Extended propagation due to network connectivity challenges..."
+        
+        # Keep the local node providing content longer
+        echo "📡 Extended DHT providing (2 minutes)..."
+        for i in {1..4}; do
+          echo "Providing round $i/4..."
+          ipfs dht provide $IPFS_HASH &
+          sleep 30
+        done
         
         # Check pinning service status
+        echo "🔍 Checking remote pinning service status..."
         PINS_STATUS=$(curl -s \
           "http://shlakotzone.duckdns.org:9097/pins" \
           -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
@@ -263,23 +323,31 @@ jobs:
         
         if echo "$PINS_STATUS" | grep -q "$IPFS_HASH"; then
           echo "✅ Content confirmed pinned on remote service"
-          echo "🌐 Content will remain available permanently"
         else
           echo "⚠️ Could not verify remote pinning status"
-          echo "Response: $PINS_STATUS"
         fi
         
-        # Test final accessibility
-        echo "🧪 Testing final accessibility..."
-        for i in {1..3}; do
-          if curl -s --max-time 10 "https://ipfs.io/ipfs/$IPFS_HASH" | grep -q "Intertwinked"; then
-            echo "✅ Content fully accessible and contains expected content"
-            break
+        # Final comprehensive accessibility test
+        echo "🧪 Final comprehensive accessibility test..."
+        FINAL_ACCESSIBLE=0
+        GATEWAYS=("https://ipfs.io/ipfs" "https://dweb.link/ipfs" "https://cf-ipfs.com/ipfs")
+        
+        for gateway in "${GATEWAYS[@]}"; do
+          if curl -s --max-time 15 "$gateway/$IPFS_HASH" | grep -q "Intertwinked"; then
+            echo "✅ $gateway - Content accessible and verified"
+            FINAL_ACCESSIBLE=$((FINAL_ACCESSIBLE + 1))
           else
-            echo "⏳ Attempt $i/3 - waiting for propagation..."
-            sleep 10
+            echo "⏳ $gateway - Still propagating"
           fi
         done
+        
+        echo "FINAL_ACCESSIBLE=$FINAL_ACCESSIBLE" >> $GITHUB_ENV
+        
+        if [ "$FINAL_ACCESSIBLE" -gt 0 ]; then
+          echo "🎉 Deployment successful! Content accessible via $FINAL_ACCESSIBLE gateway(s)"
+        else
+          echo "⚠️ Content deployed but may need additional time for full propagation"
+        fi
     
     - name: Cleanup IPFS daemon
       if: always()
