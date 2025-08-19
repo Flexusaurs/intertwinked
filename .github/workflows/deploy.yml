@@ -52,7 +52,18 @@ jobs:
         echo "Build verification:"
         [ -f build/index.html ] && echo "✅ index.html found" || echo "❌ index.html missing"
         [ -f build/health.json ] && echo "✅ health.json found" || echo "❌ health.json missing"
-    
+       - name: Network Diagnostics
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      run: |
+        echo "🔍 Network diagnostics..."
+        echo "Public IP:"
+        curl -s https://httpbin.org/ip
+        echo "DNS resolution:"
+        nslookup shlakotzone.duckdns.org
+        echo "Port connectivity test:"
+        nc -zv shlakotzone.duckdns.org 443 || echo "Port 443 closed/unreachable"
+        echo "HTTPS endpoint test:"
+        curl -sv https://shlakotzone.duckdns.org/api/v0/version 2>&1 || true 
     # Updated pinning section for your remote service
     - name: Deploy to Remote IPFS Pinning Service
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
@@ -70,12 +81,27 @@ jobs:
         FILE_SIZE=$(du -h build.tar.gz | cut -f1)
         echo "📦 Archive created: $FILE_SIZE"
         
+        # Test connectivity first
+        echo "📡 Testing connectivity to IPFS node..."
+        if curl -s --connect-timeout 10 https://shlakotzone.duckdns.org/api/v0/version; then
+          echo "✅ Server is reachable"
+        else
+          echo "❌ Server is not reachable. Common issues:"
+          echo "   1. Domain not pointing to correct IP"
+          echo "   2. Port 443 blocked on your VPS"
+          echo "   3. NGINX not running or misconfigured"
+          echo "   4. SSL certificate issues"
+          echo "   5. DuckDNS not updated with current IP"
+          exit 1
+        fi
+        
         # Upload to your IPFS node using the HTTP API
         echo "🚀 Uploading to IPFS node..."
         RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" \
           -F "file=@build.tar.gz" \
           "https://shlakotzone.duckdns.org/api/v0/add?pin=true&quieter=true" \
-          --max-time 300)
+          --max-time 300 \
+          --connect-timeout 30)
         
         HTTP_CODE=$(echo "$RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
         RESPONSE_BODY=$(echo "$RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
@@ -83,6 +109,17 @@ jobs:
         echo "📊 Upload response:"
         echo "  - HTTP Code: $HTTP_CODE"
         echo "  - Response: $RESPONSE_BODY"
+        
+        if [ "$HTTP_CODE" = "000" ]; then
+          echo "❌ Connection failed - check network connectivity"
+          echo "Diagnostic info:"
+          echo "DNS resolution:"
+          nslookup shlakotzone.duckdns.org
+          echo "Direct IP connection test:"
+          # Try connecting directly to your IP if you know it
+          # curl -s --connect-timeout 10 https://YOUR_VPS_IP/api/v0/version
+          exit 1
+        fi
         
         if [ "$HTTP_CODE" != "200" ]; then
           echo "❌ Upload failed with HTTP $HTTP_CODE"
@@ -101,21 +138,6 @@ jobs:
         
         echo "✅ Successfully added to IPFS: $IPFS_HASH"
         echo "🌐 Primary URL: https://shlakotzone.duckdns.org/ipfs/$IPFS_HASH"
-        
-        # Pin the content (in case pin=false was used)
-        echo "📌 Ensuring content is pinned..."
-        PIN_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" \
-          -X POST "https://shlakotzone.duckdns.org/api/v0/pin/add?arg=$IPFS_HASH" \
-          --max-time 30)
-        
-        PIN_HTTP_CODE=$(echo "$PIN_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-        PIN_RESPONSE_BODY=$(echo "$PIN_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
-        
-        if [ "$PIN_HTTP_CODE" = "200" ]; then
-          echo "✅ Content pinned successfully"
-        else
-          echo "⚠️ Pinning failed with HTTP $PIN_HTTP_CODE: $PIN_RESPONSE_BODY"
-        fi
         
         # Save hash for summary
         echo "IPFS_HASH=$IPFS_HASH" >> $GITHUB_ENV
