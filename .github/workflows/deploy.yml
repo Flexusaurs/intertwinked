@@ -53,261 +53,72 @@ jobs:
         [ -f build/index.html ] && echo "✅ index.html found" || echo "❌ index.html missing"
         [ -f build/health.json ] && echo "✅ health.json found" || echo "❌ health.json missing"
     
-    - name: Setup IPFS CLI
+    # Updated pinning section for your remote service
+    - name: Deploy to Remote IPFS Pinning Service
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       run: |
-        echo "Downloading IPFS..."
-        wget -q https://dist.ipfs.tech/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
-        tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
-        sudo mv kubo/ipfs /usr/local/bin/
-        ipfs --version
-        echo "IPFS CLI installed"
-    
-    - name: Initialize IPFS
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      run: |
-        echo "Initializing IPFS..."
-        export IPFS_PATH=/tmp/ipfs
-        ipfs init
-        echo "Starting IPFS daemon with network connectivity..."
-        ipfs daemon --enable-gc &
-        sleep 15
-        echo "IPFS daemon started"
-        
-        # Wait for daemon to be ready
-        timeout 30 bash -c 'until ipfs id; do sleep 1; done'
-        echo "IPFS daemon is ready and connected to network"
-    
-    - name: Pin to IPFS
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      run: |
-        export IPFS_PATH=/tmp/ipfs
-        
-        # Check IPFS daemon status
-        echo "🔍 Checking IPFS daemon status..."
-        ipfs id || (echo "❌ IPFS daemon not responding" && exit 1)
-        
-        # Check network connectivity
-        echo "🌐 Checking network connectivity..."
-        PEER_COUNT=$(ipfs swarm peers | wc -l)
-        echo "Connected to $PEER_COUNT peers"
-        
-        if [ "$PEER_COUNT" -eq 0 ]; then
-          echo "⚠️ No peers connected, trying to connect to bootstrap nodes..."
-          ipfs bootstrap add --default
-          ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN || true
-          ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa || true
-          sleep 5
-          PEER_COUNT=$(ipfs swarm peers | wc -l)
-          echo "Now connected to $PEER_COUNT peers"
-        fi
+        echo "📤 Deploying to remote IPFS pinning service..."
         
         # Verify build directory
-        echo "� Verifuying build directory..."
+        echo "🔍 Verifying build directory..."
         ls -la build/
         [ -f build/index.html ] || (echo "❌ index.html missing" && exit 1)
         
-        echo "📤 Adding files to IPFS network..."
-        # Add files to IPFS with detailed output
-        IPFS_HASH=$(ipfs add -r -Q build/)
-        echo "IPFS Hash: $IPFS_HASH"
+        # Create a tarball of the build
+        echo "📦 Creating archive..."
+        tar -czf build.tar.gz -C build .
+        FILE_SIZE=$(du -h build.tar.gz | cut -f1)
+        echo "📦 Archive created: $FILE_SIZE"
         
-        # Verify the hash format
-        if [[ ! "$IPFS_HASH" =~ ^Qm[1-9A-HJ-NP-Za-km-z]{44}$ ]]; then
-          echo "❌ Invalid IPFS hash format: $IPFS_HASH"
+        # Upload to your IPFS node using the HTTP API
+        echo "🚀 Uploading to IPFS node..."
+        RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" \
+          -F "file=@build.tar.gz" \
+          "https://shlakotzone.duckdns.org/api/v0/add?pin=true&quieter=true" \
+          --max-time 300)
+        
+        HTTP_CODE=$(echo "$RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+        RESPONSE_BODY=$(echo "$RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
+        
+        echo "📊 Upload response:"
+        echo "  - HTTP Code: $HTTP_CODE"
+        echo "  - Response: $RESPONSE_BODY"
+        
+        if [ "$HTTP_CODE" != "200" ]; then
+          echo "❌ Upload failed with HTTP $HTTP_CODE"
+          echo "Response: $RESPONSE_BODY"
           exit 1
         fi
         
-        echo "✅ Successfully added to IPFS"
-        echo "🌐 Primary URL: https://ipfs.io/ipfs/$IPFS_HASH"
+        # Extract the IPFS hash from response
+        IPFS_HASH=$(echo "$RESPONSE_BODY" | grep -o '"Hash":"[^"]*"' | head -1 | cut -d'"' -f4)
         
-        # Pin the content
-        echo "📌 Pinning content..."
-        ipfs pin add $IPFS_HASH
-        echo "✅ Content pinned to local node"
-        
-        # List what was added
-        echo "📋 Content structure:"
-        ipfs ls $IPFS_HASH
-        
-        # Test local retrieval
-        echo "🧪 Testing local content retrieval..."
-        if timeout 10 ipfs cat $IPFS_HASH/index.html > /tmp/test_index.html; then
-          echo "✅ Local retrieval successful"
-          echo "📄 Index.html size: $(wc -c < /tmp/test_index.html) bytes"
-          echo "📄 Contains 'Intertwinked': $(grep -c 'Intertwinked' /tmp/test_index.html || echo 0)"
-        else
-          echo "❌ Local retrieval failed"
+        if [ -z "$IPFS_HASH" ]; then
+          echo "❌ Could not extract IPFS hash from response"
+          echo "Full response: $RESPONSE_BODY"
           exit 1
         fi
         
-        # Announce to DHT and ensure wide propagation
-        echo "📡 Announcing to IPFS DHT..."
-        ipfs dht provide $IPFS_HASH &
-        PROVIDE_PID=$!
+        echo "✅ Successfully added to IPFS: $IPFS_HASH"
+        echo "🌐 Primary URL: https://shlakotzone.duckdns.org/ipfs/$IPFS_HASH"
         
-        # Connect to more peers to increase propagation
-        echo "🔗 Connecting to additional peers for better propagation..."
-        ipfs swarm connect /ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ || true
-        ipfs swarm connect /ip4/104.236.179.241/tcp/4001/p2p/QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM || true
-        ipfs swarm connect /ip4/128.199.219.111/tcp/4001/p2p/QmSoLSafTMBsPKadTEgaXctDQVcqN88CNLHXMkTNwMKPnu || true
-        
-        # Wait longer for better propagation
-        echo "⏳ Waiting for network propagation (60 seconds)..."
-        sleep 60
-        
-        # Try to resolve from DHT
-        echo "🔍 Testing DHT resolution..."
-        DHT_PROVIDERS=$(timeout 30 ipfs dht findprovs $IPFS_HASH | wc -l)
-        echo "Found $DHT_PROVIDERS providers in DHT"
-        
-        # Force republish to DHT
-        echo "🔄 Republishing to DHT..."
-        ipfs dht provide $IPFS_HASH
-        
-        # Test external gateway access multiple times
-        echo "🌐 Testing external gateway access..."
-        for i in {1..3}; do
-          echo "Attempt $i/3:"
-          if curl -I --max-time 15 "https://ipfs.io/ipfs/$IPFS_HASH" 2>/dev/null | head -1; then
-            echo "✅ External gateway accessible"
-            break
-          else
-            echo "⚠️ External gateway not accessible, waiting..."
-            sleep 10
-          fi
-        done
-        
-        # Pin to remote pinning service for persistent availability
-        echo "📌 Pinning to remote IPFS pinning service..."
-        echo "🔍 Debug info:"
-        echo "  - IPFS Hash: $IPFS_HASH"
-        echo "  - Hash length: ${#IPFS_HASH}"
-        echo "  - Hash format check: $(echo $IPFS_HASH | grep -E '^Qm[1-9A-HJ-NP-Za-km-z]{44}$' && echo 'VALID' || echo 'INVALID')"
-        echo "  - Service URL: http://shlakotzone.duckdns.org:9097/pins"
-        
-        # Test service connectivity and authentication
-        echo "🔗 Testing service connectivity..."
-        SERVICE_TEST=$(curl -s -w "HTTP_CODE:%{http_code}" "http://shlakotzone.duckdns.org:9097" --max-time 10)
-        echo "Service response: $SERVICE_TEST"
-        
-        echo "🔐 Testing authentication..."
-        AUTH_TEST=$(curl -s -w "HTTP_CODE:%{http_code}" \
-          "http://shlakotzone.duckdns.org:9097/pins" \
-          -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
-          --max-time 10)
-        AUTH_CODE=$(echo "$AUTH_TEST" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-        echo "Auth test HTTP code: $AUTH_CODE"
-        
-        if [ "$AUTH_CODE" = "200" ]; then
-          echo "✅ Authentication successful"
-        elif [ "$AUTH_CODE" = "401" ]; then
-          echo "❌ Authentication failed - JWT token may be invalid"
-        else
-          echo "⚠️ Unexpected auth response: $AUTH_CODE"
-        fi
-        
-        # Prepare the JSON payload
-        TIMESTAMP=$(date +%s)
-        JSON_PAYLOAD="{\"cid\":\"$IPFS_HASH\",\"name\":\"intertwinked-$TIMESTAMP\",\"origins\":[]}"
-        echo "📄 JSON payload: $JSON_PAYLOAD"
-        
-        # Make the pinning request with verbose output
-        echo "📤 Making pinning request..."
-        PINNING_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
-          "http://shlakotzone.duckdns.org:9097/pins" \
-          -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
-          -H "Content-Type: application/json" \
-          -d "$JSON_PAYLOAD" \
+        # Pin the content (in case pin=false was used)
+        echo "📌 Ensuring content is pinned..."
+        PIN_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" \
+          -X POST "https://shlakotzone.duckdns.org/api/v0/pin/add?arg=$IPFS_HASH" \
           --max-time 30)
         
-        # Parse response
-        HTTP_CODE=$(echo "$PINNING_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-        RESPONSE_BODY=$(echo "$PINNING_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
+        PIN_HTTP_CODE=$(echo "$PIN_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+        PIN_RESPONSE_BODY=$(echo "$PIN_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
         
-        echo "📊 Pinning service response:"
-        echo "  - HTTP Code: $HTTP_CODE"
-        echo "  - Response Body: $RESPONSE_BODY"
-        
-        # Check response
-        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ]; then
-          if echo "$RESPONSE_BODY" | grep -q "requestid\|created\|pinned\|success"; then
-            echo "✅ Successfully pinned to remote service"
-            echo "📌 Pinning confirmed: $RESPONSE_BODY"
-          else
-            echo "⚠️ Unexpected response format: $RESPONSE_BODY"
-          fi
-        elif [ "$HTTP_CODE" = "401" ]; then
-          echo "❌ Authentication failed - check JWT token"
-        elif [ "$HTTP_CODE" = "400" ]; then
-          echo "❌ Bad request - check IPFS hash format or JSON payload"
+        if [ "$PIN_HTTP_CODE" = "200" ]; then
+          echo "✅ Content pinned successfully"
         else
-          echo "⚠️ Remote pinning failed with HTTP $HTTP_CODE: $RESPONSE_BODY"
-          echo "Continuing with enhanced network seeding..."
-        fi
-        
-        # Enhanced network propagation due to connectivity issues
-        echo "🌐 Enhanced network propagation (addressing connectivity issues)..."
-        
-        # Connect to more reliable public nodes
-        echo "🔗 Connecting to reliable public IPFS nodes..."
-        ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN || true
-        ipfs swarm connect /dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa || true
-        ipfs swarm connect /ip4/104.131.131.82/tcp/4001/p2p/QmaCpDMGvV2BGHeYERUEnRQAwe3N8SzbUtfsmvsqQLuvuJ || true
-        ipfs swarm connect /ip4/104.236.179.241/tcp/4001/p2p/QmSoLPppuBtQSGwKDZT2M73ULpjvfd3aZ6ha4oFGL1KrGM || true
-        
-        # Multiple DHT announcements
-        echo "📡 Multiple DHT announcements..."
-        for i in {1..3}; do
-          echo "DHT announcement $i/3..."
-          ipfs dht provide $IPFS_HASH &
-          sleep 5
-        done
-        
-        # Comprehensive gateway seeding to compensate for connectivity issues
-        echo "🌱 Comprehensive gateway seeding..."
-        GATEWAYS=(
-          "https://ipfs.io/ipfs"
-          "https://dweb.link/ipfs"
-          "https://cf-ipfs.com/ipfs"
-          "https://gateway.pinata.cloud/ipfs"
-          "https://cloudflare-ipfs.com/ipfs"
-          "https://w3s.link/ipfs"
-        )
-        
-        # Seed through all gateways
-        for gateway in "${GATEWAYS[@]}"; do
-          echo "Seeding via $gateway..."
-          curl -s --max-time 20 "$gateway/$IPFS_HASH" > /dev/null &
-        done
-        
-        # Wait for seeding attempts
-        echo "⏳ Waiting for comprehensive seeding..."
-        sleep 45
-        
-        # Test multiple gateways for accessibility
-        echo "🔍 Testing gateway accessibility..."
-        ACCESSIBLE_COUNT=0
-        for gateway in "${GATEWAYS[@]}"; do
-          if curl -I --max-time 8 "$gateway/$IPFS_HASH" 2>/dev/null | grep -q "200 OK"; then
-            echo "✅ $gateway - Accessible"
-            ACCESSIBLE_COUNT=$((ACCESSIBLE_COUNT + 1))
-          else
-            echo "⏳ $gateway - Not yet accessible"
-          fi
-        done
-        
-        echo "📊 $ACCESSIBLE_COUNT out of ${#GATEWAYS[@]} gateways are accessible"
-        
-        if [ "$ACCESSIBLE_COUNT" -gt 0 ]; then
-          echo "✅ Content is accessible through $ACCESSIBLE_COUNT gateway(s)"
-        else
-          echo "⚠️ Content may need more time to propagate due to network connectivity issues"
+          echo "⚠️ Pinning failed with HTTP $PIN_HTTP_CODE: $PIN_RESPONSE_BODY"
         fi
         
         # Save hash for summary
         echo "IPFS_HASH=$IPFS_HASH" >> $GITHUB_ENV
-        echo "PEER_COUNT=$PEER_COUNT" >> $GITHUB_ENV
     
     - name: Create deployment summary
       if: env.IPFS_HASH != '' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
@@ -317,110 +128,19 @@ jobs:
         echo "**IPFS Hash:** \`$IPFS_HASH\`" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Primary Access URL:**" >> $GITHUB_STEP_SUMMARY
+        echo "- [Your IPFS Gateway](https://shlakotzone.duckdns.org/ipfs/$IPFS_HASH)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Alternative Access (Public Gateways):**" >> $GITHUB_STEP_SUMMARY
         echo "- [ipfs.io](https://ipfs.io/ipfs/$IPFS_HASH)" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Alternative Access (if primary is slow):**" >> $GITHUB_STEP_SUMMARY
         echo "- [dweb.link](https://dweb.link/ipfs/$IPFS_HASH)" >> $GITHUB_STEP_SUMMARY
-        echo "- [cf-ipfs.com](https://cf-ipfs.com/ipfs/$IPFS_HASH)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Note:** IPFS content may take 5-10 minutes to propagate across the network." >> $GITHUB_STEP_SUMMARY
+        echo "**Note:** Content is pinned on your remote IPFS node for persistent availability" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "**Deployment Time:** $(date)" >> $GITHUB_STEP_SUMMARY
-        echo "**Status:** Pinned and announced to IPFS network" >> $GITHUB_STEP_SUMMARY
-        echo "**Network Peers:** $PEER_COUNT connected during deployment" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Deployment Process:**" >> $GITHUB_STEP_SUMMARY
-        echo "- Content added to IPFS and pinned locally" >> $GITHUB_STEP_SUMMARY
-        echo "- Enhanced network propagation (multiple DHT announcements)" >> $GITHUB_STEP_SUMMARY
-        echo "- **Pinned to remote IPFS service for persistence**" >> $GITHUB_STEP_SUMMARY
-        echo "- Comprehensive seeding through 6 major gateways" >> $GITHUB_STEP_SUMMARY
-        echo "- Extended 2-minute propagation period" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Accessibility Status:**" >> $GITHUB_STEP_SUMMARY
-        if [ "${FINAL_ACCESSIBLE:-0}" -gt 0 ]; then
-          echo "- ✅ Content verified accessible via $FINAL_ACCESSIBLE gateway(s)" >> $GITHUB_STEP_SUMMARY
-          echo "- Ready for immediate use" >> $GITHUB_STEP_SUMMARY
-        else
-          echo "- ⏳ Content deployed, may need 10-15 minutes for full propagation" >> $GITHUB_STEP_SUMMARY
-          echo "- Network connectivity challenges detected, using enhanced seeding" >> $GITHUB_STEP_SUMMARY
-        fi
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Note:** Due to network connectivity challenges, content is seeded through multiple gateways for reliability." >> $GITHUB_STEP_SUMMARY
+        echo "**Status:** Pinned and accessible via your domain" >> $GITHUB_STEP_SUMMARY
     
-    - name: Extended propagation and verification
-      if: env.IPFS_HASH != '' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-      run: |
-        export IPFS_PATH=/tmp/ipfs
-        echo "🔍 Extended propagation due to network connectivity challenges..."
-        
-        # Keep the local node providing content longer
-        echo "📡 Extended DHT providing (2 minutes)..."
-        for i in {1..4}; do
-          echo "Providing round $i/4..."
-          ipfs dht provide $IPFS_HASH &
-          sleep 30
-        done
-        
-        # Check pinning service status with detailed debugging
-        echo "🔍 Checking remote pinning service status..."
-        PINS_STATUS_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" \
-          "http://shlakotzone.duckdns.org:9097/pins" \
-          -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
-          --max-time 10)
-        
-        STATUS_HTTP_CODE=$(echo "$PINS_STATUS_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-        STATUS_BODY=$(echo "$PINS_STATUS_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
-        
-        echo "📊 Pinning service status check:"
-        echo "  - HTTP Code: $STATUS_HTTP_CODE"
-        echo "  - Response: $STATUS_BODY"
-        
-        if [ "$STATUS_HTTP_CODE" = "200" ]; then
-          if echo "$STATUS_BODY" | grep -q "$IPFS_HASH"; then
-            echo "✅ Content confirmed pinned on remote service"
-            echo "🔍 Found hash in pins list"
-          else
-            echo "⚠️ Hash not found in pins list, but service is responding"
-            echo "📋 Current pins: $STATUS_BODY"
-          fi
-        else
-          echo "⚠️ Could not verify remote pinning status (HTTP $STATUS_HTTP_CODE)"
-        fi
-        
-        # Final comprehensive accessibility test
-        echo "🧪 Final comprehensive accessibility test..."
-        FINAL_ACCESSIBLE=0
-        GATEWAYS=("https://ipfs.io/ipfs" "https://dweb.link/ipfs" "https://cf-ipfs.com/ipfs")
-        
-        for gateway in "${GATEWAYS[@]}"; do
-          if curl -s --max-time 15 "$gateway/$IPFS_HASH" | grep -q "Intertwinked"; then
-            echo "✅ $gateway - Content accessible and verified"
-            FINAL_ACCESSIBLE=$((FINAL_ACCESSIBLE + 1))
-          else
-            echo "⏳ $gateway - Still propagating"
-          fi
-        done
-        
-        echo "FINAL_ACCESSIBLE=$FINAL_ACCESSIBLE" >> $GITHUB_ENV
-        
-        if [ "$FINAL_ACCESSIBLE" -gt 0 ]; then
-          echo "🎉 Deployment successful! Content accessible via $FINAL_ACCESSIBLE gateway(s)"
-        else
-          echo "⚠️ Content deployed but may need additional time for full propagation"
-        fi
-    
-    - name: Cleanup IPFS daemon
+    - name: Cleanup
       if: always()
       run: |
-        echo "Stopping IPFS daemon..."
-        pkill ipfs || true
-        echo "IPFS daemon stopped"
-    
-    - name: Build summary for PRs
-      if: github.event_name == 'pull_request'
-      run: |
-        echo "## ✅ Build Successful" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Build Status:** Completed successfully" >> $GITHUB_STEP_SUMMARY
-        echo "**Build Time:** $(date)" >> $GITHUB_STEP_SUMMARY
-        echo "**Note:** Deployment to IPFS only happens on main/master branch" >> $GITHUB_STEP_SUMMARY
+        rm -f build.tar.gz || true
+        echo "🧹 Cleanup completed"
