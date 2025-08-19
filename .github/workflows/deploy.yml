@@ -180,22 +180,69 @@ jobs:
         
         # Pin to remote pinning service for persistent availability
         echo "📌 Pinning to remote IPFS pinning service..."
-        PINNING_RESPONSE=$(curl -s -X POST \
+        echo "🔍 Debug info:"
+        echo "  - IPFS Hash: $IPFS_HASH"
+        echo "  - Hash length: ${#IPFS_HASH}"
+        echo "  - Hash format check: $(echo $IPFS_HASH | grep -E '^Qm[1-9A-HJ-NP-Za-km-z]{44}$' && echo 'VALID' || echo 'INVALID')"
+        echo "  - Service URL: http://shlakotzone.duckdns.org:9097/pins"
+        
+        # Test service connectivity and authentication
+        echo "🔗 Testing service connectivity..."
+        SERVICE_TEST=$(curl -s -w "HTTP_CODE:%{http_code}" "http://shlakotzone.duckdns.org:9097" --max-time 10)
+        echo "Service response: $SERVICE_TEST"
+        
+        echo "🔐 Testing authentication..."
+        AUTH_TEST=$(curl -s -w "HTTP_CODE:%{http_code}" \
+          "http://shlakotzone.duckdns.org:9097/pins" \
+          -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
+          --max-time 10)
+        AUTH_CODE=$(echo "$AUTH_TEST" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+        echo "Auth test HTTP code: $AUTH_CODE"
+        
+        if [ "$AUTH_CODE" = "200" ]; then
+          echo "✅ Authentication successful"
+        elif [ "$AUTH_CODE" = "401" ]; then
+          echo "❌ Authentication failed - JWT token may be invalid"
+        else
+          echo "⚠️ Unexpected auth response: $AUTH_CODE"
+        fi
+        
+        # Prepare the JSON payload
+        TIMESTAMP=$(date +%s)
+        JSON_PAYLOAD="{\"cid\":\"$IPFS_HASH\",\"name\":\"intertwinked-$TIMESTAMP\",\"origins\":[]}"
+        echo "📄 JSON payload: $JSON_PAYLOAD"
+        
+        # Make the pinning request with verbose output
+        echo "📤 Making pinning request..."
+        PINNING_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
           "http://shlakotzone.duckdns.org:9097/pins" \
           -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
           -H "Content-Type: application/json" \
-          -d "{
-            \"cid\": \"$IPFS_HASH\",
-            \"name\": \"intertwinked-$(date +%s)\",
-            \"origins\": []
-          }" \
+          -d "$JSON_PAYLOAD" \
           --max-time 30)
         
-        if echo "$PINNING_RESPONSE" | grep -q "requestid\|created"; then
-          echo "✅ Successfully pinned to remote service"
-          echo "📌 Pinning response: $PINNING_RESPONSE"
+        # Parse response
+        HTTP_CODE=$(echo "$PINNING_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+        RESPONSE_BODY=$(echo "$PINNING_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
+        
+        echo "📊 Pinning service response:"
+        echo "  - HTTP Code: $HTTP_CODE"
+        echo "  - Response Body: $RESPONSE_BODY"
+        
+        # Check response
+        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "202" ]; then
+          if echo "$RESPONSE_BODY" | grep -q "requestid\|created\|pinned\|success"; then
+            echo "✅ Successfully pinned to remote service"
+            echo "📌 Pinning confirmed: $RESPONSE_BODY"
+          else
+            echo "⚠️ Unexpected response format: $RESPONSE_BODY"
+          fi
+        elif [ "$HTTP_CODE" = "401" ]; then
+          echo "❌ Authentication failed - check JWT token"
+        elif [ "$HTTP_CODE" = "400" ]; then
+          echo "❌ Bad request - check IPFS hash format or JSON payload"
         else
-          echo "⚠️ Remote pinning may have failed: $PINNING_RESPONSE"
+          echo "⚠️ Remote pinning failed with HTTP $HTTP_CODE: $RESPONSE_BODY"
           echo "Continuing with enhanced network seeding..."
         fi
         
@@ -314,17 +361,30 @@ jobs:
           sleep 30
         done
         
-        # Check pinning service status
+        # Check pinning service status with detailed debugging
         echo "🔍 Checking remote pinning service status..."
-        PINS_STATUS=$(curl -s \
+        PINS_STATUS_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" \
           "http://shlakotzone.duckdns.org:9097/pins" \
           -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhZG1pbiJ9.85VRf4fa8Cd1gYOblVlgGBY5R9iWL93yKMEnv9ifc8Y" \
           --max-time 10)
         
-        if echo "$PINS_STATUS" | grep -q "$IPFS_HASH"; then
-          echo "✅ Content confirmed pinned on remote service"
+        STATUS_HTTP_CODE=$(echo "$PINS_STATUS_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+        STATUS_BODY=$(echo "$PINS_STATUS_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
+        
+        echo "📊 Pinning service status check:"
+        echo "  - HTTP Code: $STATUS_HTTP_CODE"
+        echo "  - Response: $STATUS_BODY"
+        
+        if [ "$STATUS_HTTP_CODE" = "200" ]; then
+          if echo "$STATUS_BODY" | grep -q "$IPFS_HASH"; then
+            echo "✅ Content confirmed pinned on remote service"
+            echo "🔍 Found hash in pins list"
+          else
+            echo "⚠️ Hash not found in pins list, but service is responding"
+            echo "📋 Current pins: $STATUS_BODY"
+          fi
         else
-          echo "⚠️ Could not verify remote pinning status"
+          echo "⚠️ Could not verify remote pinning status (HTTP $STATUS_HTTP_CODE)"
         fi
         
         # Final comprehensive accessibility test
