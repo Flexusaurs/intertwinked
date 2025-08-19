@@ -43,8 +43,7 @@ jobs:
       run: |
         echo "Building application..."
         npm run build
-        echo "Build completed"
-    
+        echo "Build completed" 
     - name: List build contents
       run: |
         echo "Build directory contents:"
